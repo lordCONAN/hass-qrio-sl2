@@ -15,6 +15,8 @@ from bleak.exc import BleakError
 from bleak_retry_connector import BleakClientWithServiceCache, establish_connection
 
 from .const import (
+    ACK_TIMEOUT,
+    BLE_COMMAND_TIMEOUT,
     BLE_CONNECT_TIMEOUT,
     CH_CHAL,
     CH_CMD,
@@ -56,6 +58,7 @@ class QrioLockCoordinator(DataUpdateCoordinator[dict]):
         self._parts: dict[int, bytes] = {}
         self._count: int | None = None
         self._response_fut: asyncio.Future[bytes] | None = None
+        self._alive_evt: asyncio.Event | None = None
         self._idle_handle = None
         self._closing = False
         super().__init__(
@@ -112,6 +115,8 @@ class QrioLockCoordinator(DataUpdateCoordinator[dict]):
         data = bytes(data)
         if not data:
             return
+        if self._alive_evt is not None and not self._alive_evt.is_set():
+            self._alive_evt.set()         # any notify proves the link is alive
         pfx, body = data[0], data[1:]
         if pfx & 0x80:                       # first chunk: low 6 bits = total count
             self._parts = {0: body}
@@ -186,33 +191,56 @@ class QrioLockCoordinator(DataUpdateCoordinator[dict]):
             await self._teardown()
 
     async def _exchange(self, opcode: int) -> bytes:
-        """Challenge→command→response over the kept-open link. Serialized per lock."""
+        """Challenge→command→response over the kept-open link. Serialized per lock.
+
+        A reused connection can be stale (the lock dropped us without our callback
+        firing). If it fails, tear it down and reconnect once; only a failure on a
+        freshly established link is reported.
+        """
         async with self._ble_lock:
             self._cancel_idle_timer()
+            reused = self._client is not None and self._client.is_connected
             try:
-                client = await self._ensure_connected()
-                result = await self._run_command(client, opcode)
-            except Exception:
-                # Drop a possibly half-broken link so the next call reconnects clean.
+                result = await self._run_once(opcode)
+            except Exception as first_exc:  # noqa: BLE001
                 await self._teardown()
-                raise
+                if not reused:
+                    raise
+                _LOGGER.debug("%s: reused BLE link failed (%s); reconnecting",
+                              self.lock_name, first_exc)
+                try:
+                    result = await self._run_once(opcode)
+                except Exception:
+                    await self._teardown()
+                    raise
             self._schedule_idle_disconnect()
             return result
 
-    async def _run_command(self, client: BleakClientWithServiceCache, opcode: int) -> bytes:
+    async def _run_once(self, opcode: int) -> bytes:
+        client = await self._ensure_connected()
         self._parts = {}
         self._count = None
         fut: asyncio.Future[bytes] = self.hass.loop.create_future()
+        alive = asyncio.Event()
         self._response_fut = fut
+        self._alive_evt = alive
         try:
             chal = proto.Challenge.parse(await client.read_gatt_char(CH_CHAL))
             prover = os.urandom(16)
             frame = proto.build_frame(self._ekey, self._signing_key, opcode, chal, prover)
             for c in proto.chunk(frame):
                 await client.write_gatt_char(CH_CMD, c, response=False)
+            # Phase 1: any notify (the quick ack) proves the link is alive. None
+            # within ACK_TIMEOUT means the link is dead -> let the caller retry.
             try:
-                return await asyncio.wait_for(fut, timeout=BLE_CONNECT_TIMEOUT)
+                await asyncio.wait_for(alive.wait(), timeout=ACK_TIMEOUT)
+            except asyncio.TimeoutError as exc:
+                raise UpdateFailed(f"no ack to {proto.VERB[opcode]} (stale link?)") from exc
+            # Phase 2: wait for the real signed response (after the bolt drives).
+            try:
+                return await asyncio.wait_for(fut, timeout=BLE_COMMAND_TIMEOUT)
             except asyncio.TimeoutError as exc:
                 raise UpdateFailed(f"no response to {proto.VERB[opcode]}") from exc
         finally:
             self._response_fut = None
+            self._alive_evt = None

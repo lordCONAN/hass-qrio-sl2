@@ -45,6 +45,11 @@ LK_FW = "fw_version"
 # ----- Behaviour -----
 STATUS_INTERVAL = timedelta(seconds=60)   # STATUS is read-only; safe to poll
 BLE_CONNECT_TIMEOUT = 30.0
+# After writing a command, the lock first sends a quick notify ack, then the
+# real response once it has (for lock/unlock) driven the bolt. No notify at all
+# within ACK_TIMEOUT means the (possibly reused) link is dead -> reconnect once.
+ACK_TIMEOUT = 5.0
+BLE_COMMAND_TIMEOUT = 20.0                 # full wait for the real response
 # Keep the BLE link open after activity so lock/unlock don't pay the
 # connect+service-discovery cost (a few seconds over a proxy) every time. Set
 # above STATUS_INTERVAL so routine polling keeps the link continuously warm; it
