@@ -10,12 +10,15 @@ Runtime lock/unlock/status never touch the cloud.
 from __future__ import annotations
 
 import base64
+import logging
 import re
 
 from aiohttp import ClientSession
 from nacl import signing
 
 from .const import API_BASE, BASE_HEADERS
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class QrioAuthError(Exception):
@@ -98,23 +101,35 @@ async def fetch_locks(session: ClientSession, email: str, password: str,
         raise QrioCloudError("no locks returned for this account")
 
     locks = []
+    skipped = []
     for d in data:
         lock = d.get("lock") or {}
+        lid = lock.get("id")
+        name = (lock.get("lock_setting") or {}).get("lock_name") or f"Qrio {lid}"
         ekraw = decode_ekey((d.get("master_key") or {}).get("ekey"))
+        # A lock with no master-key ekey (e.g. a shared/guest lock, or one you
+        # don't hold a key for) can't be driven locally — skip it instead of
+        # failing the whole mint, so the account's usable locks still show up.
         if not ekraw or len(ekraw) != 122:
-            raise QrioCloudError(
-                f"ekey for lock {lock.get('id')} decoded to "
-                f"{len(ekraw) if ekraw else 0}B (expected 122)")
+            skipped.append(f"{name} (ekey {len(ekraw) if ekraw else 0}B)")
+            continue
         if bytes.fromhex(ed_pk_hex) not in ekraw:
-            raise QrioCloudError("minted ekey does not embed our key — account/key mismatch")
+            skipped.append(f"{name} (key not embedded)")
+            continue
         locks.append({
-            "lock_id": lock.get("id"),
-            "lock_name": (lock.get("lock_setting") or {}).get("lock_name") or f"Qrio {lock.get('id')}",
+            "lock_id": lid,
+            "lock_name": name,
             "bd_address": lock.get("bd_address"),
             "serial_no": lock.get("serial_no"),
             "fw_version": lock.get("fw_version"),
             "ekey_hex": ekraw.hex(),
         })
+    if skipped:
+        _LOGGER.info("Qrio: skipped locks without a usable local key: %s", skipped)
+    if not locks:
+        raise QrioCloudError(
+            f"no lock on this account returned a usable local key "
+            f"(checked {len(data)}; skipped: {skipped or 'none'})")
     return {"email": email, "client_seed_hex": seed_hex, "refresh_token": refresh,
             "token": token, "locks": locks}
 
