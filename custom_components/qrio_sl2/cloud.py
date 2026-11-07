@@ -12,11 +12,14 @@ from __future__ import annotations
 import base64
 import logging
 import re
+from typing import TYPE_CHECKING
 
-from aiohttp import ClientSession
 from nacl import signing
 
 from .const import API_BASE, BASE_HEADERS
+
+if TYPE_CHECKING:
+    from aiohttp import ClientSession
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -59,7 +62,10 @@ async def sign_in(session: ClientSession, email: str, password: str) -> tuple[st
     except (QrioAuthError, QrioCloudError):
         raise
     except Exception as exc:  # noqa: BLE001
-        raise QrioCloudError(f"sign_in failed: {exc}") from exc
+        # Never interpolate the raw exception: its text could echo the POSTed
+        # credentials or headers. Keep only the failure type (chained for a
+        # full-traceback debug; config_flow logs just this message).
+        raise QrioCloudError(f"sign-in request failed ({type(exc).__name__})") from exc
     token = j.get("id_token")
     if not token:
         raise QrioCloudError("sign_in: no id_token in response")
@@ -76,7 +82,9 @@ async def _get_json(session: ClientSession, path: str, token: str, params: dict)
     except QrioCloudError:
         raise
     except Exception as exc:  # noqa: BLE001
-        raise QrioCloudError(f"{path} failed: {exc}") from exc
+        # Same as sign_in: the Authorization: Bearer <token> header could show
+        # up in a raw aiohttp error, so surface only the path + failure type.
+        raise QrioCloudError(f"{path} request failed ({type(exc).__name__})") from exc
 
 
 async def fetch_locks(session: ClientSession, email: str, password: str,
