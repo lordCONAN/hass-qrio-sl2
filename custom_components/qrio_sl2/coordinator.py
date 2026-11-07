@@ -20,6 +20,7 @@ from .const import (
     CH_CMD,
     CH_NOTIFY,
     DOMAIN,
+    KEEPALIVE_IDLE,
     OP_LOCK,
     OP_STATUS,
     OP_UNLOCK,
@@ -31,7 +32,12 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class QrioLockCoordinator(DataUpdateCoordinator[dict]):
-    """Owns the BLE link + crypto for a single lock; polls STATUS, runs lock/unlock."""
+    """Owns the BLE link + crypto for a single lock; polls STATUS, runs lock/unlock.
+
+    The BLE connection (and its notify subscription) is kept open and reused
+    across commands/polls, then dropped after KEEPALIVE_IDLE of inactivity, so
+    lock/unlock don't pay the connect+discovery cost every time.
+    """
 
     def __init__(self, hass: HomeAssistant, entry_id: str, lock: dict, seed_hex: str) -> None:
         self.lock_id = lock["lock_id"]
@@ -44,6 +50,14 @@ class QrioLockCoordinator(DataUpdateCoordinator[dict]):
         self._signing_key = signing.SigningKey(bytes.fromhex(seed_hex))
         self._ble_lock = asyncio.Lock()
         self.last_result: dict | None = None
+        # persistent connection + notify reassembly state
+        self._client: BleakClientWithServiceCache | None = None
+        self._notify_started = False
+        self._parts: dict[int, bytes] = {}
+        self._count: int | None = None
+        self._response_fut: asyncio.Future[bytes] | None = None
+        self._idle_handle = None
+        self._closing = False
         super().__init__(
             hass,
             _LOGGER,
@@ -78,6 +92,14 @@ class QrioLockCoordinator(DataUpdateCoordinator[dict]):
         self.async_set_updated_data(data)
         await self.async_request_refresh()
 
+    async def async_shutdown(self) -> None:
+        """Drop the kept-open BLE link on unload/reload."""
+        self._closing = True
+        self._cancel_idle_timer()
+        async with self._ble_lock:
+            await self._teardown()
+        await super().async_shutdown()
+
     # ---- BLE plumbing ----
     def _ble_device(self):
         dev = bluetooth.async_ble_device_from_address(self.hass, self.address, connectable=True)
@@ -86,48 +108,102 @@ class QrioLockCoordinator(DataUpdateCoordinator[dict]):
                 f"{self.lock_name} ({self.address}) not reachable via any adapter/proxy")
         return dev
 
-    async def _exchange(self, opcode: int) -> bytes:
-        """One full connect→challenge→command→response round-trip. Serialized per lock."""
+    def _on_notify(self, _char, data: bytearray) -> None:
+        data = bytes(data)
+        if not data:
+            return
+        pfx, body = data[0], data[1:]
+        if pfx & 0x80:                       # first chunk: low 6 bits = total count
+            self._parts = {0: body}
+            self._count = pfx & 0x3F
+        else:                                # middle (idx) or last (0x40|idx)
+            self._parts[pfx & 0x3F] = body
+        n = self._count
+        if n is not None and len(self._parts) == n and all(i in self._parts for i in range(n)):
+            msg = b"".join(self._parts[i] for i in range(n))
+            self._parts = {}
+            self._count = None
+            fut = self._response_fut
+            # the ack is short (<64 B, status 113); keep the real signed response
+            if fut is not None and not fut.done() and (len(msg) >= 64 or msg[:1] == b"\x61"):
+                fut.set_result(msg)
+
+    def _on_disconnect(self, _client) -> None:
+        """Lock/proxy dropped the link — forget the client so we reconnect next time."""
+        self._client = None
+        self._notify_started = False
+        fut = self._response_fut
+        if fut is not None and not fut.done():
+            fut.set_exception(BleakError("disconnected mid-exchange"))
+
+    async def _ensure_connected(self) -> BleakClientWithServiceCache:
+        if self._client is not None and self._client.is_connected:
+            return self._client
+        self._client = None
+        self._notify_started = False
+        device = self._ble_device()
+        client: BleakClientWithServiceCache = await establish_connection(
+            BleakClientWithServiceCache, device, self.lock_name,
+            disconnected_callback=self._on_disconnect,
+            max_attempts=3, timeout=BLE_CONNECT_TIMEOUT)
+        await client.start_notify(CH_NOTIFY, self._on_notify)
+        self._client = client
+        self._notify_started = True
+        return client
+
+    async def _teardown(self) -> None:
+        client, self._client = self._client, None
+        was_notifying, self._notify_started = self._notify_started, False
+        if client is None:
+            return
+        try:
+            if was_notifying and client.is_connected:
+                await client.stop_notify(CH_NOTIFY)
+        except BleakError:
+            pass
+        try:
+            await client.disconnect()
+        except BleakError:
+            pass
+
+    def _cancel_idle_timer(self) -> None:
+        if self._idle_handle is not None:
+            self._idle_handle.cancel()
+            self._idle_handle = None
+
+    def _schedule_idle_disconnect(self) -> None:
+        self._cancel_idle_timer()
+        if self._closing:
+            return
+        self._idle_handle = self.hass.loop.call_later(
+            KEEPALIVE_IDLE,
+            lambda: self.hass.async_create_task(self._idle_disconnect()),
+        )
+
+    async def _idle_disconnect(self) -> None:
         async with self._ble_lock:
-            device = self._ble_device()
-            client: BleakClientWithServiceCache = await establish_connection(
-                BleakClientWithServiceCache, device, self.lock_name,
-                max_attempts=3, timeout=BLE_CONNECT_TIMEOUT)
+            self._idle_handle = None
+            await self._teardown()
+
+    async def _exchange(self, opcode: int) -> bytes:
+        """Challenge→command→response over the kept-open link. Serialized per lock."""
+        async with self._ble_lock:
+            self._cancel_idle_timer()
             try:
-                return await self._do_exchange(client, opcode)
-            finally:
-                try:
-                    await client.disconnect()
-                except BleakError:
-                    pass
+                client = await self._ensure_connected()
+                result = await self._run_command(client, opcode)
+            except Exception:
+                # Drop a possibly half-broken link so the next call reconnects clean.
+                await self._teardown()
+                raise
+            self._schedule_idle_disconnect()
+            return result
 
-    async def _do_exchange(self, client: BleakClientWithServiceCache, opcode: int) -> bytes:
-        parts: dict[int, bytes] = {}
-        state = {"count": None}
-        loop = asyncio.get_running_loop()
-        fut: asyncio.Future[bytes] = loop.create_future()
-
-        def on_notify(_char, data: bytearray) -> None:
-            data = bytes(data)
-            if not data:
-                return
-            pfx, body = data[0], data[1:]
-            if pfx & 0x80:                       # first chunk: low 6 bits = total count
-                parts.clear()
-                state["count"] = pfx & 0x3F
-                parts[0] = body
-            else:                                # middle (idx) or last (0x40|idx)
-                parts[pfx & 0x3F] = body
-            n = state["count"]
-            if n is not None and len(parts) == n and all(i in parts for i in range(n)):
-                msg = b"".join(parts[i] for i in range(n))
-                parts.clear()
-                state["count"] = None
-                # the ack is short (<64 B, status 113); keep the real signed response
-                if (len(msg) >= 64 or msg[:1] == b"\x61") and not fut.done():
-                    fut.set_result(msg)
-
-        await client.start_notify(CH_NOTIFY, on_notify)
+    async def _run_command(self, client: BleakClientWithServiceCache, opcode: int) -> bytes:
+        self._parts = {}
+        self._count = None
+        fut: asyncio.Future[bytes] = self.hass.loop.create_future()
+        self._response_fut = fut
         try:
             chal = proto.Challenge.parse(await client.read_gatt_char(CH_CHAL))
             prover = os.urandom(16)
@@ -139,7 +215,4 @@ class QrioLockCoordinator(DataUpdateCoordinator[dict]):
             except asyncio.TimeoutError as exc:
                 raise UpdateFailed(f"no response to {proto.VERB[opcode]}") from exc
         finally:
-            try:
-                await client.stop_notify(CH_NOTIFY)
-            except BleakError:
-                pass
+            self._response_fut = None

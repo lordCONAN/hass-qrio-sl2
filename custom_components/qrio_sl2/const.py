@@ -45,3 +45,9 @@ LK_FW = "fw_version"
 # ----- Behaviour -----
 STATUS_INTERVAL = timedelta(seconds=60)   # STATUS is read-only; safe to poll
 BLE_CONNECT_TIMEOUT = 30.0
+# Keep the BLE link open after activity so lock/unlock don't pay the
+# connect+service-discovery cost (a few seconds over a proxy) every time. Set
+# above STATUS_INTERVAL so routine polling keeps the link continuously warm; it
+# only drops if polling stops or the connection is lost. This is how the lock
+# runs with a Qrio Hub anyway (a persistent BLE link).
+KEEPALIVE_IDLE = 90.0
