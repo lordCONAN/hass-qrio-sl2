@@ -63,6 +63,12 @@ Status reads never move the bolt. Lock/unlock are only triggered by HA `lock.loc
 / `lock.unlock` calls. The integration reports the lock's own signed result,
 including “already in position”, so entity state stays honest.
 
+## Credits
+
+The Qrio SL-2 BLE protocol was reverse-engineered, and this integration written,
+with **[Claude Code](https://claude.com/claude-code)** (Anthropic) — from decoding
+the command framing and Ed25519 signing to the Home Assistant integration itself.
+
 ## Disclaimer
 
 Unofficial, not affiliated with Qrio. Use at your own risk.
