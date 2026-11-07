@@ -1,0 +1,51 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Qrio account",
+        "description": "Sign in with your Qrio account. Your password is used once to mint a local key, then discarded — lock/unlock runs entirely over Bluetooth with no cloud. You'll pick which lock to add next.",
+        "data": {
+          "email": "Email",
+          "password": "Password"
+        }
+      },
+      "select_lock": {
+        "title": "Choose a lock",
+        "description": "Select the lock to add. Run the integration again to add another.",
+        "data": {
+          "lock": "Lock"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Re-mint Qrio key",
+        "description": "Re-enter the password for {email} to mint a fresh key.",
+        "data": {
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Invalid email or password.",
+      "cannot_connect": "Could not reach the Qrio service.",
+      "lock_gone": "That lock is no longer on this account.",
+      "unknown": "Unexpected error."
+    },
+    "abort": {
+      "already_configured": "This lock is already set up.",
+      "all_configured": "Every lock on this account is already set up.",
+      "reauth_successful": "Re-minted the key successfully."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "thumb_turn": {
+        "name": "Thumb-turn",
+        "state": { "locked": "Locked", "unlocked": "Unlocked", "unknown": "Unknown" }
+      },
+      "battery_a": { "name": "Battery A" },
+      "battery_b": { "name": "Battery B" },
+      "active_battery": { "name": "Active battery" },
+      "signal_power": { "name": "Advertised signal power" }
+    }
+  }
+}
