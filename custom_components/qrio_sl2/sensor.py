@@ -15,6 +15,7 @@ from homeassistant.const import SIGNAL_STRENGTH_DECIBELS_MILLIWATT, EntityCatego
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+from . import qrio_protocol as proto
 from .const import DOMAIN
 from .coordinator import QrioLockCoordinator
 from .entity import QrioEntity
@@ -35,18 +36,30 @@ SENSORS: tuple[QrioSensorDescription, ...] = (
         value=lambda d: d.get("thumb_turn"),
     ),
     QrioSensorDescription(
+        key="battery",
+        translation_key="battery",
+        icon="mdi:battery",
+        device_class=SensorDeviceClass.ENUM,
+        options=["good", "low", "replace", "empty", "unknown"],
+        value=lambda d: proto.battery_overall(d.get("battery_a"), d.get("battery_b")),
+    ),
+    QrioSensorDescription(
         key="battery_a",
         translation_key="battery_a",
         entity_category=EntityCategory.DIAGNOSTIC,
         icon="mdi:battery",
-        value=lambda d: d.get("battery_a"),
+        device_class=SensorDeviceClass.ENUM,
+        options=["good", "low", "empty", "unknown"],
+        value=lambda d: proto.battery_slot_level(d.get("battery_a")),
     ),
     QrioSensorDescription(
         key="battery_b",
         translation_key="battery_b",
         entity_category=EntityCategory.DIAGNOSTIC,
         icon="mdi:battery",
-        value=lambda d: d.get("battery_b"),
+        device_class=SensorDeviceClass.ENUM,
+        options=["good", "low", "empty", "unknown"],
+        value=lambda d: proto.battery_slot_level(d.get("battery_b")),
     ),
     QrioSensorDescription(
         key="active_battery",

@@ -103,6 +103,39 @@ _DRIVE = {255: "unknown", 0: "drove", 1: "not_driven"}         # ul/g.java (0=OK
 # battery enums that indicate a problem worth surfacing
 BATTERY_PROBLEM = {"warn", "empty_pending", "ep_reset", "empty", "ng_7v", "no_battery"}
 
+# Friendly battery levels, matching the Qrio app (li/g.java).
+# Per slot (h()/i()): the raw cl/b state collapses to good / low / empty / unknown.
+_SLOT_LEVEL = {
+    "ok_6v": "good", "ok_thumbturn": "good",
+    "warn": "low",
+    "empty_pending": "empty", "ep_reset": "empty", "empty": "empty",
+    "unknown": "unknown", "ng_7v": "unknown",
+}
+
+
+def battery_slot_level(raw: str | None) -> str:
+    """One slot's friendly level (good/low/empty/unknown)."""
+    return _SLOT_LEVEL.get(raw or "", "unknown")
+
+
+def battery_overall(a_raw: str | None, b_raw: str | None) -> str:
+    """The headline battery status the app shows (li/g.j).
+
+    The lock runs on one of two cells and you hot-swap, so one empty slot is
+    "replace" (still working), both empty is "empty".
+    """
+    levels = [battery_slot_level(a_raw), battery_slot_level(b_raw)]
+    empties = levels.count("empty")
+    if empties == 2:
+        return "empty"
+    if empties == 1:
+        return "replace"
+    if "low" in levels:
+        return "low"
+    if "good" in levels:
+        return "good"
+    return "unknown"
+
 
 def decode_status(resp: bytes) -> dict | None:
     """Parse a ReadStatus(Weak) response into a flat dict, or None if not one."""

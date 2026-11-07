@@ -42,8 +42,18 @@
         "name": "Thumb-turn",
         "state": { "locked": "Locked", "unlocked": "Unlocked", "unknown": "Unknown" }
       },
-      "battery_a": { "name": "Battery A" },
-      "battery_b": { "name": "Battery B" },
+      "battery": {
+        "name": "Battery",
+        "state": { "good": "Good", "low": "Low", "replace": "Replace", "empty": "Empty", "unknown": "Unknown" }
+      },
+      "battery_a": {
+        "name": "Battery A",
+        "state": { "good": "Good", "low": "Low", "empty": "Empty", "unknown": "Unknown" }
+      },
+      "battery_b": {
+        "name": "Battery B",
+        "state": { "good": "Good", "low": "Low", "empty": "Empty", "unknown": "Unknown" }
+      },
       "active_battery": { "name": "Active battery" },
       "signal_power": { "name": "Advertised signal power" }
     }
