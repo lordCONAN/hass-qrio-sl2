@@ -17,6 +17,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     coordinator = QrioLockCoordinator(
         hass, entry.entry_id, entry.data[CONF_LOCK], entry.data[CONF_SEED]
     )
+    # Start passive advert tracking before priming, so an event-counter change
+    # triggers a refresh even while we're between (now-infrequent) polls.
+    coordinator.start_advert_tracking()
     # Prime it; async_refresh never raises, so a lock that is temporarily out of
     # range just stays unavailable until its first successful poll.
     await coordinator.async_refresh()

@@ -8,7 +8,7 @@ import os
 from nacl import signing
 
 from homeassistant.components import bluetooth
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from bleak.exc import BleakError
@@ -61,6 +61,10 @@ class QrioLockCoordinator(DataUpdateCoordinator[dict]):
         self._alive_evt: asyncio.Event | None = None
         self._idle_handle = None
         self._closing = False
+        # passive advert tracking: trigger a refresh only when the lock's
+        # "lastLog" event counter changes (i.e. it was actually operated)
+        self._unsub_advert = None
+        self._last_lastlog: int | None = None
         super().__init__(
             hass,
             _LOGGER,
@@ -71,6 +75,33 @@ class QrioLockCoordinator(DataUpdateCoordinator[dict]):
     @property
     def unique_id(self) -> str:
         return f"{DOMAIN}_{self.lock_id}"
+
+    @callback
+    def start_advert_tracking(self) -> None:
+        """Passively watch the lock's adverts so we refresh only on real events."""
+        self._unsub_advert = bluetooth.async_register_callback(
+            self.hass,
+            self._advert_seen,
+            {"address": self.address, "connectable": False},
+            bluetooth.BluetoothScanningMode.PASSIVE,
+        )
+
+    @callback
+    def _advert_seen(self, service_info, change) -> None:
+        info = proto.parse_advert(service_info.manufacturer_data.get(proto.MANUFACTURER_ID))
+        if info is None:
+            return
+        if self.serial_no is not None and str(info["serial"]) != str(self.serial_no):
+            return  # not our lock (shouldn't happen: matched by address)
+        lastlog = info["lastlog"]
+        if lastlog == self._last_lastlog:
+            return
+        first = self._last_lastlog is None
+        self._last_lastlog = lastlog
+        if not first:
+            # The lock was operated (manual/keypad/app) — read exact state now.
+            _LOGGER.debug("%s: lastLog -> %s; refreshing", self.lock_name, lastlog)
+            self.hass.async_create_task(self.async_request_refresh())
 
     async def _async_update_data(self) -> dict:
         # Release the link right after a poll so the phone app isn't locked out.
@@ -99,8 +130,11 @@ class QrioLockCoordinator(DataUpdateCoordinator[dict]):
         await self.async_request_refresh()
 
     async def async_shutdown(self) -> None:
-        """Drop the kept-open BLE link on unload/reload."""
+        """Stop advert tracking and drop the kept-open BLE link on unload/reload."""
         self._closing = True
+        if self._unsub_advert is not None:
+            self._unsub_advert()
+            self._unsub_advert = None
         self._cancel_idle_timer()
         async with self._ble_lock:
             await self._teardown()

@@ -43,11 +43,11 @@ LK_SERIAL = "serial_no"
 LK_FW = "fw_version"
 
 # ----- Behaviour -----
-# Each poll briefly takes the lock's single BLE connection, which would block a
-# phone's hands-free unlock if it coincided. HA's own lock/unlock updates state
-# immediately, so polling only needs to catch EXTERNAL changes (thumb-turn,
-# keypad, app) and battery — a slow cadence is plenty and keeps the radio free.
-STATUS_INTERVAL = timedelta(minutes=5)
+# External lock events are now caught in near-real-time from BLE adverts (the
+# "lastLog" counter), each triggering an on-demand STATUS read — no connection
+# in between. This periodic poll is just a safety net (battery, missed adverts),
+# so it can be infrequent, keeping the lock's single BLE slot free for the phone.
+STATUS_INTERVAL = timedelta(minutes=30)
 BLE_CONNECT_TIMEOUT = 30.0
 # After writing a command, the lock first sends a quick notify ack, then the
 # real response once it has (for lock/unlock) driven the bolt. No notify at all

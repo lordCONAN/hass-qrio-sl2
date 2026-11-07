@@ -137,6 +137,28 @@ def battery_overall(a_raw: str | None, b_raw: str | None) -> str:
     return "unknown"
 
 
+# ---------- BLE advertisement (manufacturer data, company 0x0235 = 565) ----------
+# The lock continuously broadcasts 16 bytes of manufacturer-specific data (tl/g1):
+#   [0:8]  EncryptedLockStatus (opaque; the app never decrypts it)
+#   [8:12] serial number (u32 LE; the lock's 7-digit serial)
+#   [12:16] lastLog (u32 LE; increments on each logged lock event)
+# We can't read exact state from the encrypted blob, but lastLog is a plaintext
+# change signal received passively (no connection) — a change means the lock was
+# operated, so it's worth reading STATUS then.
+MANUFACTURER_ID = 565
+
+
+def parse_advert(md: bytes | None) -> dict | None:
+    """Parse the lock's company-565 manufacturer data (the bytes after the id)."""
+    if not md or len(md) < 16:
+        return None
+    return {
+        "enc_status": md[0:8],
+        "serial": int.from_bytes(md[8:12], "little"),
+        "lastlog": int.from_bytes(md[12:16], "little"),
+    }
+
+
 def decode_status(resp: bytes) -> dict | None:
     """Parse a ReadStatus(Weak) response into a flat dict, or None if not one."""
     if len(resp) < 15 or resp[0:2] != b"\x61\x00":
