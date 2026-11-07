@@ -73,7 +73,8 @@ class QrioLockCoordinator(DataUpdateCoordinator[dict]):
         return f"{DOMAIN}_{self.lock_id}"
 
     async def _async_update_data(self) -> dict:
-        resp = await self._exchange(OP_STATUS)
+        # Release the link right after a poll so the phone app isn't locked out.
+        resp = await self._exchange(OP_STATUS, keep_open=False)
         st = proto.decode_status(resp)
         if not st:
             raise UpdateFailed(f"unexpected STATUS response: {resp.hex()}")
@@ -82,7 +83,9 @@ class QrioLockCoordinator(DataUpdateCoordinator[dict]):
     async def async_set_locked(self, want_locked: bool) -> None:
         """Send LOCK or UNLOCK, verify the signed result, then refresh state."""
         opcode = OP_LOCK if want_locked else OP_UNLOCK
-        resp = await self._exchange(opcode)
+        # Hold the link briefly so the status refresh below can reuse it; that
+        # refresh (keep_open=False) then releases it for the app.
+        resp = await self._exchange(opcode, keep_open=True)
         res = proto.decode_op_result(resp, self._lock_ed_pk)
         if not res or not res["sig_ok"]:
             raise UpdateFailed(f"{proto.VERB[opcode]}: unverified lock response")
@@ -190,12 +193,14 @@ class QrioLockCoordinator(DataUpdateCoordinator[dict]):
             self._idle_handle = None
             await self._teardown()
 
-    async def _exchange(self, opcode: int) -> bytes:
-        """Challenge→command→response over the kept-open link. Serialized per lock.
+    async def _exchange(self, opcode: int, keep_open: bool = False) -> bytes:
+        """Challenge→command→response. Serialized per lock.
 
-        A reused connection can be stale (the lock dropped us without our callback
-        firing). If it fails, tear it down and reconnect once; only a failure on a
-        freshly established link is reported.
+        The lock allows only one connection, so we release it right after unless
+        keep_open is set (a lock/unlock, whose paired status refresh then reuses
+        and releases the link). A reused connection can be stale (the lock dropped
+        us without our callback firing); if it fails, tear it down and reconnect
+        once — only a failure on a freshly established link is reported.
         """
         async with self._ble_lock:
             self._cancel_idle_timer()
@@ -213,7 +218,10 @@ class QrioLockCoordinator(DataUpdateCoordinator[dict]):
                 except Exception:
                     await self._teardown()
                     raise
-            self._schedule_idle_disconnect()
+            if keep_open:
+                self._schedule_idle_disconnect()
+            else:
+                await self._teardown()
             return result
 
     async def _run_once(self, opcode: int) -> bytes:

@@ -50,9 +50,9 @@ BLE_CONNECT_TIMEOUT = 30.0
 # within ACK_TIMEOUT means the (possibly reused) link is dead -> reconnect once.
 ACK_TIMEOUT = 5.0
 BLE_COMMAND_TIMEOUT = 20.0                 # full wait for the real response
-# Keep the BLE link open after activity so lock/unlock don't pay the
-# connect+service-discovery cost (a few seconds over a proxy) every time. Set
-# above STATUS_INTERVAL so routine polling keeps the link continuously warm; it
-# only drops if polling stops or the connection is lost. This is how the lock
-# runs with a Qrio Hub anyway (a persistent BLE link).
-KEEPALIVE_IDLE = 90.0
+# The lock accepts only ONE BLE connection at a time, so holding it open blocks
+# the Qrio phone app ("Connected to another device", error 114). We therefore
+# release it as soon as we're done: status polls disconnect immediately, and a
+# lock/unlock holds it only briefly (so the paired status refresh can reuse the
+# link) before releasing. This is just a fallback idle timeout for that window.
+KEEPALIVE_IDLE = 8.0
