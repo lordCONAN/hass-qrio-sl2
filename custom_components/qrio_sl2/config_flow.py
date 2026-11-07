@@ -35,6 +35,17 @@ class QrioConfigFlow(ConfigFlow, domain=DOMAIN):
 
     async def async_step_bluetooth(self, discovery_info) -> ConfigFlowResult:
         """A Qrio lock advertised nearby — still need account credentials to add it."""
+        address = discovery_info.address
+        # Entries key on the cloud lock_id, but discovery keys on the BLE MAC, so
+        # HA can't dedupe them itself. Match the advertised address against each
+        # entry's stored bd_address and abort, else the "Discovered" card nags
+        # forever for a lock that's already set up.
+        for entry in self._async_current_entries():
+            bd = (entry.data.get(CONF_LOCK) or {}).get("bd_address")
+            if bd and bd.upper() == address.upper():
+                return self.async_abort(reason="already_configured")
+        # Dedupe repeated adverts of the same not-yet-added lock into one flow.
+        await self.async_set_unique_id(address, raise_on_progress=False)
         return await self.async_step_user()
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
