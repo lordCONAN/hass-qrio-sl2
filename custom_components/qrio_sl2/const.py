@@ -31,8 +31,10 @@ FRAME_LEN = 247                                      # fixed, zero-padded
 # ----- Config entry keys (one config entry == one lock) -----
 CONF_EMAIL = "email"
 CONF_SEED = "client_seed_hex"
-CONF_REFRESH = "refresh_token"
 CONF_LOCK = "lock"            # the single selected lock's dict
+# Legacy key no longer stored (the refresh token was never used at runtime);
+# stripped from any pre-existing entry on load. See async_setup_entry.
+LEGACY_CONF_REFRESH = "refresh_token"
 # per-lock dict keys
 LK_ID = "lock_id"
 LK_NAME = "lock_name"

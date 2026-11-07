@@ -1,2 +1,33 @@
+# Python
 __pycache__/
 *.pyc
+*.pyo
+.venv/
+venv/
+
+# Secrets / credentials — never commit
+.env
+.env.*
+*.key
+*.pem
+*.p12
+*.keystore
+secrets.*
+qrio_enrollment*.json
+ha_key*.hex
+*credentials*
+*.secret
+
+# Packet captures / debug dumps (may contain keys, MACs, tokens)
+*.pklg
+*.pcap
+*.pcapng
+*.har
+*.log
+*.dump
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

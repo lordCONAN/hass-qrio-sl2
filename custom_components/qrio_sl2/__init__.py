@@ -6,7 +6,7 @@ import logging
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
-from .const import CONF_LOCK, CONF_SEED, DOMAIN, PLATFORMS
+from .const import CONF_LOCK, CONF_SEED, DOMAIN, LEGACY_CONF_REFRESH, PLATFORMS
 from .coordinator import QrioLockCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -14,6 +14,13 @@ _LOGGER = logging.getLogger(__name__)
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up the one lock this entry represents."""
+    # Drop the never-used refresh token from any entry created by an older
+    # version, so the credential isn't kept at rest.
+    if LEGACY_CONF_REFRESH in entry.data:
+        hass.config_entries.async_update_entry(
+            entry, data={k: v for k, v in entry.data.items() if k != LEGACY_CONF_REFRESH}
+        )
+
     coordinator = QrioLockCoordinator(
         hass, entry.entry_id, entry.data[CONF_LOCK], entry.data[CONF_SEED]
     )

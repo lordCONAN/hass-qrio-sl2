@@ -14,7 +14,6 @@ from .cloud import QrioAuthError, QrioCloudError, fetch_lock_ed_pk, fetch_locks
 from .const import (
     CONF_EMAIL,
     CONF_LOCK,
-    CONF_REFRESH,
     CONF_SEED,
     DOMAIN,
 )
@@ -97,7 +96,6 @@ class QrioConfigFlow(ConfigFlow, domain=DOMAIN):
                     data={
                         CONF_EMAIL: self._enr["email"],
                         CONF_SEED: self._enr["client_seed_hex"],
-                        CONF_REFRESH: self._enr["refresh_token"],
                         CONF_LOCK: lock,
                     },
                 )
@@ -139,7 +137,7 @@ class QrioConfigFlow(ConfigFlow, domain=DOMAIN):
                         self.hass.config_entries.async_update_entry(
                             entry,
                             data={**entry.data, CONF_SEED: enr["client_seed_hex"],
-                                  CONF_REFRESH: enr["refresh_token"], CONF_LOCK: fresh},
+                                  CONF_LOCK: fresh},
                         )
                         await self.hass.config_entries.async_reload(entry.entry_id)
                         return self.async_abort(reason="reauth_successful")

@@ -86,15 +86,18 @@ async def fetch_locks(session: ClientSession, email: str, password: str,
     Reuses seed_hex when given (same account / reauth), else generates a fresh
     keypair. Does NOT fetch per-lock public keys — that happens once a lock is
     chosen (see fetch_lock_ed_pk). Returns:
-      {email, client_seed_hex, refresh_token, token, locks: [ {lock_id,
+      {email, client_seed_hex, token, locks: [ {lock_id,
        lock_name, bd_address, serial_no, fw_version, ekey_hex}, ... ]}
-    The token is kept so the caller can fetch the chosen lock's ed_pk next.
+    The token is kept only in memory so the caller can fetch the chosen lock's
+    ed_pk next; it is never persisted.
     """
     sk = signing.SigningKey(bytes.fromhex(seed_hex)) if seed_hex else signing.SigningKey.generate()
     seed_hex = bytes(sk).hex()
     ed_pk_hex = bytes(sk.verify_key).hex()
 
-    token, refresh = await sign_in(session, email, password)
+    # The refresh token is intentionally discarded — runtime is pure local BLE
+    # and never calls the cloud again; re-auth re-mints from the password.
+    token, _refresh = await sign_in(session, email, password)
     allj = await _get_json(session, "/v1/u/all", token, {"ed_pk": ed_pk_hex})
     data = allj.get("data") or []
     if not data:
@@ -130,7 +133,7 @@ async def fetch_locks(session: ClientSession, email: str, password: str,
         raise QrioCloudError(
             f"no lock on this account returned a usable local key "
             f"(checked {len(data)}; skipped: {skipped or 'none'})")
-    return {"email": email, "client_seed_hex": seed_hex, "refresh_token": refresh,
+    return {"email": email, "client_seed_hex": seed_hex,
             "token": token, "locks": locks}
 
 
