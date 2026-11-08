@@ -25,13 +25,15 @@ def _load_protocol():
 
 
 def test_parse_advert():
+    import struct
     proto = _load_protocol()
-    # 16 manufacturer bytes observed for a real lock in scan.pcapng
-    md = bytes.fromhex("97dfd8bb167a34000f3310002d400100")
+    # Synthetic manufacturer payload: [8B enc][u32 LE serial][u32 LE lastLog].
+    enc = bytes(range(8))
+    md = enc + struct.pack("<I", 7654321) + struct.pack("<I", 4242)
     info = proto.parse_advert(md)
-    assert info["serial"] == 1061647, info
-    assert info["lastlog"] == 81965, info
-    assert info["enc_status"] == bytes.fromhex("97dfd8bb167a3400")
+    assert info["serial"] == 7654321, info
+    assert info["lastlog"] == 4242, info
+    assert info["enc_status"] == enc
     assert proto.parse_advert(None) is None
     assert proto.parse_advert(b"\x00" * 8) is None   # too short
     assert proto.MANUFACTURER_ID == 565
@@ -49,13 +51,16 @@ def test_battery_levels():
     assert proto.battery_overall("empty", "empty") == "empty"
 
 
-def test_entry_data_has_no_password_or_refresh():
-    """The stored config entry must never include the password or refresh token."""
+def test_entry_data_at_setup_has_no_secrets():
+    """At setup the entry stores neither the password nor any cloud token —
+    cloud tokens are only added later, when cloud is explicitly enabled."""
     src = (PKG / "config_flow.py").read_text(encoding="utf-8")
-    # Grab every data={...} dict literal passed when creating/updating an entry.
-    for block in re.findall(r"data=\{(.*?)\}", src, re.DOTALL):
-        assert "PASSWORD" not in block, "password must not be stored in the entry"
-        assert "refresh" not in block.lower(), "refresh token must not be stored"
+    m = re.search(r"def _build_entry_data.*?(?=\n\ndef |\n\nclass )", src, re.DOTALL)
+    assert m, "could not find _build_entry_data"
+    body = m.group(0)
+    for forbidden in ("PASSWORD", "password", "CONF_REFRESH", "CONF_IDTOKEN",
+                      "refresh_token", "id_token"):
+        assert forbidden not in body, f"{forbidden} must not be stored at setup"
 
 
 def test_no_secret_is_logged():

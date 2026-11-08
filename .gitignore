@@ -26,6 +26,12 @@ ha_key*.hex
 *.log
 *.dump
 
+# Review / diff scratch files — never commit
+*.patch
+*.orig
+*.rej
+review.*
+
 # Editor / OS
 .vscode/
 .idea/

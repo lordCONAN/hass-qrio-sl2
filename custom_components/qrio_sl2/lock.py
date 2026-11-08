@@ -4,7 +4,7 @@ from __future__ import annotations
 from homeassistant.components.lock import LockEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import UpdateFailed
 
@@ -47,6 +47,13 @@ class QrioLock(QrioEntity, LockEntity):
         self.async_write_ha_state()
         try:
             await self.coordinator.async_set_locked(want_locked)
+        except ConfigEntryAuthFailed as exc:
+            # Cloud creds need replacing — kick off HA's re-auth flow.
+            self.coordinator.start_reauth()
+            raise HomeAssistantError(
+                f"Qrio {verb}: cloud sign-in expired, please re-authenticate") from exc
+        except HomeAssistantError:
+            raise                                   # already a clear message
         except UpdateFailed as exc:
             raise HomeAssistantError(f"Qrio {verb} failed: {exc}") from exc
         finally:

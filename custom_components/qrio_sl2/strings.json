@@ -36,6 +36,34 @@
       "reauth_successful": "Re-minted the key successfully."
     }
   },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Transport (local / cloud)",
+        "description": "Choose how status reads and lock/unlock reach this lock. Cloud uses your Qrio Hub — it's faster and works even if the Bluetooth proxy is down, but it requires storing a Qrio refresh token in Home Assistant to keep the cloud session alive. Status defaults to local to keep cloud traffic low.",
+        "data": {
+          "status_transport": "Status updates",
+          "operate_transport": "Lock / unlock"
+        }
+      },
+      "cloud_auth": {
+        "title": "Re-enable cloud",
+        "description": "Enter the password for {email} to re-mint the cloud session token (it was cleared when you switched to local only). Your existing local key is kept.",
+        "data": {
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Invalid email or password.",
+      "cannot_connect": "Could not reach the Qrio service.",
+      "no_hub": "This lock no longer has a paired Qrio Hub.",
+      "unknown": "Unexpected error."
+    },
+    "abort": {
+      "no_hub": "This lock has no paired Qrio Hub, so cloud control isn't available — it runs over local Bluetooth only."
+    }
+  },
   "entity": {
     "sensor": {
       "thumb_turn": {

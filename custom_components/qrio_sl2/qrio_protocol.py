@@ -167,9 +167,12 @@ def decode_status(resp: bytes) -> dict | None:
     if len(c) < 13:
         return None
     s8 = c[12] - 256 if c[12] >= 128 else c[12]
+    # 2=CLOSED(locked), 1=OPENED(unlocked); anything else (0=UNKNOWN or an
+    # unexpected value) is genuinely unknown — NOT "unlocked".
+    locked = True if c[8] == 2 else (False if c[8] == 1 else None)
     return {
         "device_status": _DEVSTATUS.get(c[0], f"0x{c[0]:02x}"),
-        "locked": c[8] == 2,
+        "locked": locked,
         "thumb_turn": _THUMB.get(c[8], f"0x{c[8]:02x}"),
         "battery_a": _BATT.get(c[5], f"0x{c[5]:02x}"),
         "battery_b": _BATT.get(c[6], f"0x{c[6]:02x}"),

@@ -24,6 +24,7 @@ from .entity import QrioEntity
 @dataclass(frozen=True, kw_only=True)
 class QrioSensorDescription(SensorEntityDescription):
     value: Callable[[dict], object]
+    ble_only: bool = False   # value comes only from a fresh BLE read (cloud can't refresh it)
 
 
 SENSORS: tuple[QrioSensorDescription, ...] = (
@@ -41,6 +42,7 @@ SENSORS: tuple[QrioSensorDescription, ...] = (
         icon="mdi:battery",
         device_class=SensorDeviceClass.ENUM,
         options=["good", "low", "replace", "empty", "unknown"],
+        ble_only=True,
         value=lambda d: proto.battery_overall(d.get("battery_a"), d.get("battery_b")),
     ),
     QrioSensorDescription(
@@ -50,6 +52,7 @@ SENSORS: tuple[QrioSensorDescription, ...] = (
         icon="mdi:battery",
         device_class=SensorDeviceClass.ENUM,
         options=["good", "low", "empty", "unknown"],
+        ble_only=True,
         value=lambda d: proto.battery_slot_level(d.get("battery_a")),
     ),
     QrioSensorDescription(
@@ -59,6 +62,7 @@ SENSORS: tuple[QrioSensorDescription, ...] = (
         icon="mdi:battery",
         device_class=SensorDeviceClass.ENUM,
         options=["good", "low", "empty", "unknown"],
+        ble_only=True,
         value=lambda d: proto.battery_slot_level(d.get("battery_b")),
     ),
     QrioSensorDescription(
@@ -66,6 +70,7 @@ SENSORS: tuple[QrioSensorDescription, ...] = (
         translation_key="active_battery",
         entity_category=EntityCategory.DIAGNOSTIC,
         icon="mdi:battery-sync",
+        ble_only=True,
         value=lambda d: d.get("active_battery"),
     ),
     QrioSensorDescription(
@@ -76,6 +81,7 @@ SENSORS: tuple[QrioSensorDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
         native_unit_of_measurement=SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
         entity_registry_enabled_default=False,
+        ble_only=True,
         value=lambda d: d.get("ibeacon_signal_power_dbm"),
     ),
 )
@@ -102,3 +108,19 @@ class QrioSensor(QrioEntity, SensorEntity):
     def native_value(self):
         data = self.coordinator.data
         return self.entity_description.value(data) if data else None
+
+    @property
+    def extra_state_attributes(self):
+        # For BLE-only diagnostics, make it explicit when the shown value is a
+        # cached last-known reading (status came via cloud, which can't refresh it).
+        data = self.coordinator.data
+        if not data or not self.entity_description.ble_only:
+            return None
+        source = data.get("status_source")
+        measured = data.get("ble_measured_at")
+        attrs = {"last_measured": measured}
+        if source == "cloud":
+            attrs["reading"] = "cached"          # value is last-known BLE, not fresh
+        elif source == "local":
+            attrs["reading"] = "fresh"
+        return attrs

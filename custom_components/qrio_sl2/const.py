@@ -32,9 +32,11 @@ FRAME_LEN = 247                                      # fixed, zero-padded
 CONF_EMAIL = "email"
 CONF_SEED = "client_seed_hex"
 CONF_LOCK = "lock"            # the single selected lock's dict
-# Legacy key no longer stored (the refresh token was never used at runtime);
-# stripped from any pre-existing entry on load. See async_setup_entry.
-LEGACY_CONF_REFRESH = "refresh_token"
+# Cloud auth tokens — stored ONLY for hub-equipped (cloud-capable) locks, so
+# cloud operate/status can refresh the session unattended. Local-only locks
+# store neither (keeps the 0.2.1 hardening). A warning is shown in options.
+CONF_REFRESH = "refresh_token"
+CONF_IDTOKEN = "id_token"
 # per-lock dict keys
 LK_ID = "lock_id"
 LK_NAME = "lock_name"
@@ -43,6 +45,21 @@ LK_EKEY = "ekey_hex"          # normalized to hex, 122 B
 LK_EDPK = "lock_ed_pk_hex"
 LK_SERIAL = "serial_no"
 LK_FW = "fw_version"
+LK_HAS_HUB = "has_hub"        # lock.lock_setting.hub present in /v1/u/all
+LK_HUB_ID = "hub_id"
+
+# ----- Transport options (per-entry, set in the options flow) -----
+CONF_STATUS_TRANSPORT = "status_transport"
+CONF_OPERATE_TRANSPORT = "operate_transport"
+T_LOCAL = "local"             # local BLE only
+T_CLOUD = "cloud"             # cloud (hub) only
+T_LOCAL_CLOUD = "local_cloud"  # local first, cloud fallback
+T_CLOUD_LOCAL = "cloud_local"  # cloud first, local fallback
+TRANSPORTS = [T_LOCAL, T_CLOUD, T_LOCAL_CLOUD, T_CLOUD_LOCAL]
+# Local-only by default: cloud is opt-in (consent) and avoids any cloud traffic
+# / stored-token use until the user explicitly enables it in the options flow.
+DEFAULT_STATUS_TRANSPORT = T_LOCAL
+DEFAULT_OPERATE_TRANSPORT = T_LOCAL
 
 # ----- Behaviour -----
 # External lock events are now caught in near-real-time from BLE adverts (the
@@ -56,6 +73,10 @@ BLE_CONNECT_TIMEOUT = 30.0
 # within ACK_TIMEOUT means the (possibly reused) link is dead -> reconnect once.
 ACK_TIMEOUT = 5.0
 BLE_COMMAND_TIMEOUT = 20.0                 # full wait for the real response
+# Cloud operate: POST returns a job; poll it every polling_interval (ms) until
+# job_status is terminal, capped at CLOUD_JOB_TIMEOUT (the app uses 60s).
+CLOUD_JOB_TIMEOUT = 60.0
+CLOUD_HTTP_TIMEOUT = 20.0
 # The lock accepts only ONE BLE connection at a time, so holding it open blocks
 # the Qrio phone app ("Connected to another device", error 114). We therefore
 # release it as soon as we're done: status polls disconnect immediately, and a
