@@ -222,6 +222,29 @@ async def refresh_session(session: ClientSession, id_token: str,
 _THUMB_CLOUD = {0: "unknown", 1: "unlocked", 2: "locked"}
 
 
+def _as_int(v):
+    """Coerce an int-or-numeric-string to int; anything else -> None."""
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, int):
+        return v
+    if isinstance(v, str) and v.strip().lstrip("-").isdigit():
+        return int(v)
+    return None
+
+
+def _main_lock_from(j: dict):
+    """Pull main_lock from the response, tolerating a `data` wrapper."""
+    if not isinstance(j, dict):
+        return None
+    if "main_lock" in j:
+        return _as_int(j.get("main_lock"))
+    inner = j.get("data")
+    if isinstance(inner, dict) and "main_lock" in inner:
+        return _as_int(inner.get("main_lock"))
+    return None
+
+
 def _locked_from_main(main) -> bool | None:
     return True if main == 2 else (False if main == 1 else None)
 
@@ -229,7 +252,12 @@ def _locked_from_main(main) -> bool | None:
 async def cloud_status(session: ClientSession, token: str, lock_id: str) -> dict:
     """GET the lock's thumb-turn state via cloud -> {locked, thumb_turn}."""
     j = await _get_json(session, f"/v1/u/locks/{lock_id}/thumbturn_state", token, {})
-    main = j.get("main_lock")
+    main = _main_lock_from(j)
+    if main not in (1, 2) and _LOGGER.isEnabledFor(logging.DEBUG):
+        # No secrets here — just the shape/keys and the resolved value — so we can
+        # see why a 200 didn't yield a locked/unlocked state.
+        keys = sorted(j.keys()) if isinstance(j, dict) else type(j).__name__
+        _LOGGER.debug("cloud_status: main_lock=%r keys=%s", main, keys)
     return {"locked": _locked_from_main(main),
             "thumb_turn": _THUMB_CLOUD.get(main, "unknown")}
 

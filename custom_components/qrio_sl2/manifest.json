@@ -1,7 +1,7 @@
 {
   "domain": "qrio_sl2",
   "name": "Qrio Smart Lock SL-2",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "config_flow": true,
   "documentation": "https://github.com/lordCONAN/hass-qrio-sl2",
   "issue_tracker": "https://github.com/lordCONAN/hass-qrio-sl2/issues",
