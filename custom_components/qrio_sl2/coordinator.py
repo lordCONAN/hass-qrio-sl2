@@ -29,11 +29,13 @@ from .const import (
     ACK_TIMEOUT,
     BLE_COMMAND_TIMEOUT,
     BLE_CONNECT_TIMEOUT,
+    BLE_DIAG_KEYS,
     CH_CHAL,
     CH_CMD,
     CH_NOTIFY,
     CLOUD_HTTP_TIMEOUT,
     CLOUD_JOB_TIMEOUT,
+    CONF_BLE_SNAPSHOT,
     CONF_IDTOKEN,
     CONF_LOCK,
     CONF_OPERATE_TRANSPORT,
@@ -101,6 +103,12 @@ class QrioLockCoordinator(DataUpdateCoordinator[dict]):
         self._id_token = entry.data.get(CONF_IDTOKEN)
         self._refresh_token = entry.data.get(CONF_REFRESH)
         self._token_lock = asyncio.Lock()
+        # Last-known BLE-only diagnostics, restored from the entry so battery/
+        # active-battery still show (as cached) after a reload, even if the first
+        # refresh runs over cloud (which can't read them).
+        snap = entry.data.get(CONF_BLE_SNAPSHOT) or {}
+        self._ble_snapshot = {k: v for k, v in snap.items()
+                              if k in BLE_DIAG_KEYS or k == "ble_measured_at"}
         self.status_transport = entry.options.get(
             CONF_STATUS_TRANSPORT, DEFAULT_STATUS_TRANSPORT)
         self.operate_transport = entry.options.get(
@@ -164,16 +172,33 @@ class QrioLockCoordinator(DataUpdateCoordinator[dict]):
             raise UpdateFailed(f"unexpected STATUS response: {resp.hex()}")
         st["status_source"] = "local"           # a full, fresh BLE reading
         st["ble_measured_at"] = dt_util.utcnow().isoformat()
+        self._remember_ble_diag(st)
         return st
+
+    def _remember_ble_diag(self, st: dict) -> None:
+        """Cache BLE-only diagnostics in memory + the entry (on change only).
+
+        Lets battery/active-battery survive a reload and keep showing (as cached)
+        while status runs over cloud. Persisted only when a slot value actually
+        changes, so storage writes stay rare (battery is slow-moving)."""
+        snap = {k: st.get(k) for k in BLE_DIAG_KEYS}
+        snap["ble_measured_at"] = st.get("ble_measured_at")
+        self._ble_snapshot = snap
+        stored = self._entry.data.get(CONF_BLE_SNAPSHOT) or {}
+        if any(stored.get(k) != snap.get(k) for k in BLE_DIAG_KEYS):
+            self.hass.config_entries.async_update_entry(
+                self._entry, data={**self._entry.data, CONF_BLE_SNAPSHOT: snap})
 
     async def _cloud_status(self) -> dict:
         st = await self._cloud_call(
             lambda tok: cloud_api.cloud_status(self._session(), tok, self.lock_id))
-        # Cloud status carries thumb-turn only. Merge over the last reading so we
-        # don't ERASE previously known BLE diagnostics (battery/signal); they ride
-        # along as last-known (tagged source=cloud and keeping the original
+        # Cloud status carries thumb-turn only. Merge over the last-known BLE
+        # diagnostics (restored snapshot as the floor, any live data on top) so we
+        # don't show battery/active as unknown just because the current session
+        # started on cloud. They ride along as last-known (source=cloud, original
         # ble_measured_at), never presented as a fresh cloud measurement.
-        merged = {**(self.data or {}), **st, "status_source": "cloud"}
+        merged = {**self._ble_snapshot, **(self.data or {}), **st,
+                  "status_source": "cloud"}
         return merged
 
     async def _async_update_data(self) -> dict:

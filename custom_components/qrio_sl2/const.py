@@ -37,6 +37,12 @@ CONF_LOCK = "lock"            # the single selected lock's dict
 # store neither (keeps the 0.2.1 hardening). A warning is shown in options.
 CONF_REFRESH = "refresh_token"
 CONF_IDTOKEN = "id_token"
+# Last-known BLE-only diagnostics (battery slots + active battery + timestamp),
+# persisted so they survive a reload/restart and still show (as cached) when
+# status runs over cloud, which can't read them. Slow-changing, so writes are
+# rare; signal power is intentionally NOT persisted (fast-changing, optional).
+CONF_BLE_SNAPSHOT = "ble_snapshot"
+BLE_DIAG_KEYS = ("battery_a", "battery_b", "active_battery")
 # per-lock dict keys
 LK_ID = "lock_id"
 LK_NAME = "lock_name"
