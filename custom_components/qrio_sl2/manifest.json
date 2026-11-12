@@ -1,7 +1,7 @@
 {
   "domain": "qrio_sl2",
   "name": "Qrio Smart Lock SL-2",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "config_flow": true,
   "documentation": "https://github.com/lordCONAN/hass-qrio-sl2",
   "issue_tracker": "https://github.com/lordCONAN/hass-qrio-sl2/issues",
@@ -9,7 +9,7 @@
   "dependencies": ["bluetooth_adapters"],
   "requirements": ["pynacl>=1.5.0", "bleak-retry-connector>=3.5.0"],
   "iot_class": "local_polling",
-  "integration_type": "hub",
+  "integration_type": "device",
   "bluetooth": [
     { "service_uuid": "b88612e9-b3c1-45ee-aaf5-5e145e2d9831" }
   ]

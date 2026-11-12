@@ -27,6 +27,7 @@ from . import transport
 from .transport import BleNotSubmitted, BleUncertain
 from .const import (
     ACK_TIMEOUT,
+    ADVERT_REFRESH_DELAY,
     BLE_COMMAND_TIMEOUT,
     BLE_CONNECT_TIMEOUT,
     BLE_DIAG_KEYS,
@@ -126,6 +127,7 @@ class QrioLockCoordinator(DataUpdateCoordinator[dict]):
         # "lastLog" event counter changes (i.e. it was actually operated)
         self._unsub_advert = None
         self._last_lastlog: int | None = None
+        self._advert_handle = None
         super().__init__(
             hass,
             _LOGGER,
@@ -160,9 +162,34 @@ class QrioLockCoordinator(DataUpdateCoordinator[dict]):
         first = self._last_lastlog is None
         self._last_lastlog = lastlog
         if not first:
-            # The lock was operated (manual/keypad/app) — read exact state now.
-            _LOGGER.debug("%s: lastLog -> %s; refreshing", self.lock_name, lastlog)
-            self.hass.async_create_task(self.async_request_refresh())
+            # The lock was operated (manual/keypad/app/hands-free). Do NOT connect
+            # now: a status read during the post-unlock grace collapses the lock's
+            # ~4-min hands-free auto-lock to the short regular one. Schedule a
+            # single debounced read AFTER the grace instead, so HA still catches
+            # up without touching the lock while it's holding the door.
+            _LOGGER.debug("%s: lastLog -> %s; deferring refresh", self.lock_name, lastlog)
+            self._schedule_advert_refresh()
+
+    def _cancel_advert_refresh(self) -> None:
+        if self._advert_handle is not None:
+            self._advert_handle.cancel()
+            self._advert_handle = None
+
+    def _schedule_advert_refresh(self) -> None:
+        # Debounce: each new event pushes the single pending read out, so a burst
+        # of operations results in one read once the lock settles.
+        self._cancel_advert_refresh()
+        if self._closing:
+            return
+        self._advert_handle = self.hass.loop.call_later(
+            ADVERT_REFRESH_DELAY,
+            lambda: self.hass.async_create_task(self._advert_refresh()),
+        )
+
+    async def _advert_refresh(self) -> None:
+        self._advert_handle = None
+        if not self._closing:
+            await self.async_request_refresh()
 
     # ---- STATUS (read-only; fallback/retry across transports is safe) ----
     async def _local_status(self) -> dict:
@@ -396,6 +423,7 @@ class QrioLockCoordinator(DataUpdateCoordinator[dict]):
         if self._unsub_advert is not None:
             self._unsub_advert()
             self._unsub_advert = None
+        self._cancel_advert_refresh()
         self._cancel_idle_timer()
         async with self._ble_lock:
             await self._teardown()

@@ -89,3 +89,9 @@ CLOUD_HTTP_TIMEOUT = 20.0
 # lock/unlock holds it only briefly (so the paired status refresh can reuse the
 # link) before releasing. This is just a fallback idle timeout for that window.
 KEEPALIVE_IDLE = 8.0
+# When the lock advertises that it was just operated (lastLog changed), we no
+# longer connect immediately to read status: connecting during the lock's post-
+# unlock grace appears to collapse the ~4-min hands-free auto-lock window down to
+# the short regular one. Instead we wait out the grace, then do one debounced
+# read. 300s is safely past the ~255s (0xFF) failsafe window.
+ADVERT_REFRESH_DELAY = 300.0
