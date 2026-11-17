@@ -14,7 +14,15 @@ is a direct, signed BLE exchange and the password is never stored.
 
 - `lock` entity per lock (one entry per lock) — lock / unlock
 - Status: thumb-turn (locked / unlocked / **unknown**), battery A/B + overall level,
-  active battery, advertised signal power. Near-real-time updates from BLE adverts.
+  active battery, advertised signal power.
+- **Event-driven state, no polling:** lock/unlock state updates from the lock's own
+  BLE advertisement the moment it's operated (by anything). With a hub, the exact
+  state is confirmed via a cloud read that opens **no** BLE link to the lock, so it
+  never interferes with the phone's hands-free unlock; without a hub it falls back
+  to a single local read taken *after* the auto-lock grace.
+- **Battery on your terms:** a **Refresh battery** button does one local read on
+  demand (cached until next press), plus an optional once-a-day read at a time you
+  set. The lock's single Bluetooth slot is otherwise left free for your phone.
 - Local lock responses are **signature-verified** against the lock's own key
   (authentic, not spoofable)
 - Account-level config flow (email + password) → mints a key for the chosen lock

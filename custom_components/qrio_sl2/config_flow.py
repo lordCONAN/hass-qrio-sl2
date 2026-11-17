@@ -15,9 +15,11 @@ from homeassistant.config_entries import (
 from homeassistant.const import CONF_PASSWORD
 from homeassistant.core import callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.selector import TimeSelector
 
 from .cloud import QrioAuthError, QrioCloudError, fetch_lock_ed_pk, fetch_locks
 from .const import (
+    CONF_DAILY_POLL_TIME,
     CONF_EMAIL,
     CONF_IDTOKEN,
     CONF_LOCK,
@@ -25,6 +27,7 @@ from .const import (
     CONF_REFRESH,
     CONF_SEED,
     CONF_STATUS_TRANSPORT,
+    DEFAULT_DAILY_POLL_TIME,
     DEFAULT_OPERATE_TRANSPORT,
     DEFAULT_STATUS_TRANSPORT,
     DOMAIN,
@@ -256,6 +259,10 @@ class QrioOptionsFlow(OptionsFlow):
                 CONF_OPERATE_TRANSPORT,
                 default=opts.get(CONF_OPERATE_TRANSPORT, DEFAULT_OPERATE_TRANSPORT),
             ): vol.In(TRANSPORT_LABELS),
+            vol.Required(
+                CONF_DAILY_POLL_TIME,
+                default=opts.get(CONF_DAILY_POLL_TIME, DEFAULT_DAILY_POLL_TIME),
+            ): TimeSelector(),
         })
         return self.async_show_form(step_id="init", data_schema=schema)
 

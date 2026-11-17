@@ -40,10 +40,11 @@
     "step": {
       "init": {
         "title": "Transport (local / cloud)",
-        "description": "Choose how status reads and lock/unlock reach this lock. Cloud uses your Qrio Hub — it's faster and works even if the Bluetooth proxy is down, but it requires storing a Qrio refresh token in Home Assistant to keep the cloud session alive. Status defaults to local to keep cloud traffic low.",
+        "description": "Choose how status reads and lock/unlock reach this lock. Cloud uses your Qrio Hub — it's faster and works even if the Bluetooth proxy is down, but it requires storing a Qrio refresh token in Home Assistant to keep the cloud session alive. Status defaults to local to keep cloud traffic low. Lock/unlock state updates from the lock's own events; battery refreshes on the button and once a day at the time below.",
         "data": {
           "status_transport": "Status updates",
-          "operate_transport": "Lock / unlock"
+          "operate_transport": "Lock / unlock",
+          "daily_poll_time": "Daily battery read time"
         }
       },
       "cloud_auth": {
@@ -84,6 +85,9 @@
       },
       "active_battery": { "name": "Active battery" },
       "signal_power": { "name": "Advertised signal power" }
+    },
+    "button": {
+      "refresh_battery": { "name": "Refresh battery" }
     }
   }
 }

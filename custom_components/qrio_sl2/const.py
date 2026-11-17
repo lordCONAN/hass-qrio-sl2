@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import timedelta
 
 DOMAIN = "qrio_sl2"
-PLATFORMS = ["lock", "sensor"]
+PLATFORMS = ["lock", "sensor", "button"]
 
 # ----- Qrio King cloud API (used ONLY at setup/reauth to mint an ekey) -----
 API_BASE = "https://sl2-api.qrioinc.com"
@@ -43,6 +43,11 @@ CONF_IDTOKEN = "id_token"
 # rare; signal power is intentionally NOT persisted (fast-changing, optional).
 CONF_BLE_SNAPSHOT = "ble_snapshot"
 BLE_DIAG_KEYS = ("battery_a", "battery_b", "active_battery")
+# Option: once-a-day local BLE read (for battery) at this local time "HH:MM:SS".
+# Battery is otherwise only refreshed on demand via the "Refresh battery" button;
+# lock/unlock STATE comes from the BLE advert event + a cloud read (no polling).
+CONF_DAILY_POLL_TIME = "daily_poll_time"
+DEFAULT_DAILY_POLL_TIME = "03:00:00"
 # per-lock dict keys
 LK_ID = "lock_id"
 LK_NAME = "lock_name"

@@ -7,8 +7,10 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
 from .const import (
+    CONF_DAILY_POLL_TIME,
     CONF_OPERATE_TRANSPORT,
     CONF_STATUS_TRANSPORT,
+    DEFAULT_DAILY_POLL_TIME,
     DEFAULT_OPERATE_TRANSPORT,
     DEFAULT_STATUS_TRANSPORT,
     DOMAIN,
@@ -23,8 +25,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up the one lock this entry represents."""
     coordinator = QrioLockCoordinator(hass, entry)
     # Start passive advert tracking before priming, so an event-counter change
-    # triggers a refresh even while we're between (now-infrequent) polls.
+    # updates state (via cloud, or a deferred local read) as soon as it happens.
     coordinator.start_advert_tracking()
+    # Once-a-day local battery read at the configured time.
+    coordinator.start_daily_poll()
     # Prime it; async_refresh never raises, so a lock that is temporarily out of
     # range just stays unavailable until its first successful poll.
     await coordinator.async_refresh()
@@ -37,10 +41,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def _async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Reload only when the transport OPTIONS changed.
+    """Reload only when a user OPTION changed (transport or daily-poll time).
 
-    Token persistence updates entry.data (not options) and would otherwise reload
-    the integration mid-operation — skip those.
+    Token/snapshot persistence updates entry.data (not options) and would
+    otherwise reload the integration mid-operation — skip those.
     """
     coordinators = hass.data.get(DOMAIN, {}).get(entry.entry_id)
     if coordinators:
@@ -50,6 +54,8 @@ async def _async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
             == c.status_transport
             and entry.options.get(CONF_OPERATE_TRANSPORT, DEFAULT_OPERATE_TRANSPORT)
             == c.operate_transport
+            and entry.options.get(CONF_DAILY_POLL_TIME, DEFAULT_DAILY_POLL_TIME)
+            == c._daily_time
         )
         if same:
             return

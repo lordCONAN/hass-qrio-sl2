@@ -15,6 +15,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.event import async_track_time_change
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
@@ -37,12 +38,14 @@ from .const import (
     CLOUD_HTTP_TIMEOUT,
     CLOUD_JOB_TIMEOUT,
     CONF_BLE_SNAPSHOT,
+    CONF_DAILY_POLL_TIME,
     CONF_IDTOKEN,
     CONF_LOCK,
     CONF_OPERATE_TRANSPORT,
     CONF_REFRESH,
     CONF_SEED,
     CONF_STATUS_TRANSPORT,
+    DEFAULT_DAILY_POLL_TIME,
     DEFAULT_OPERATE_TRANSPORT,
     DEFAULT_STATUS_TRANSPORT,
     DOMAIN,
@@ -50,7 +53,6 @@ from .const import (
     OP_LOCK,
     OP_STATUS,
     OP_UNLOCK,
-    STATUS_INTERVAL,
     T_CLOUD,
     T_CLOUD_LOCAL,
     T_LOCAL,
@@ -128,11 +130,19 @@ class QrioLockCoordinator(DataUpdateCoordinator[dict]):
         self._unsub_advert = None
         self._last_lastlog: int | None = None
         self._advert_handle = None
+        self._cloud_refresh_inflight = False
+        # once-a-day local battery read (for battery) at a user-set local time
+        self._daily_time = entry.options.get(
+            CONF_DAILY_POLL_TIME, DEFAULT_DAILY_POLL_TIME)
+        self._unsub_daily = None
         super().__init__(
             hass,
             _LOGGER,
             name=f"{DOMAIN} {self.lock_name}",
-            update_interval=STATUS_INTERVAL,
+            # No periodic poll: lock/unlock STATE comes from the advert event
+            # (+ a cloud read), battery from the button and the daily read. This
+            # keeps the lock's single BLE slot free for the phone / hands-free.
+            update_interval=None,
         )
 
     @property
@@ -162,13 +172,42 @@ class QrioLockCoordinator(DataUpdateCoordinator[dict]):
         first = self._last_lastlog is None
         self._last_lastlog = lastlog
         if not first:
-            # The lock was operated (manual/keypad/app/hands-free). Do NOT connect
-            # now: a status read during the post-unlock grace collapses the lock's
-            # ~4-min hands-free auto-lock to the short regular one. Schedule a
-            # single debounced read AFTER the grace instead, so HA still catches
-            # up without touching the lock while it's holding the door.
-            _LOGGER.debug("%s: lastLog -> %s; deferring refresh", self.lock_name, lastlog)
+            # The lock was operated (manual/keypad/app/hands-free). Never connect
+            # over BLE now: a status read during the post-unlock grace collapses
+            # the lock's ~4-min hands-free auto-lock to the short regular one.
+            if self._cloud_state_available():
+                # A cloud read goes via the hub and opens NO BLE link to the lock,
+                # so it's safe here and gives the exact state within a second or
+                # two — effectively a push for lock/unlock events.
+                _LOGGER.debug("%s: lastLog -> %s; cloud state read", self.lock_name, lastlog)
+                self.hass.async_create_task(self._refresh_state_cloud())
+            else:
+                # No cloud: fall back to a single debounced local read AFTER the
+                # grace, so HA still catches up without shortening hands-free.
+                _LOGGER.debug("%s: lastLog -> %s; deferring local refresh",
+                              self.lock_name, lastlog)
+                self._schedule_advert_refresh()
+
+    def _cloud_state_available(self) -> bool:
+        """Cloud state reads are possible: hub-equipped and have a session token."""
+        return bool(self.has_hub and self._id_token and self._refresh_token)
+
+    async def _refresh_state_cloud(self) -> None:
+        """Read exact lock/unlock state via the hub (no BLE) after an advert event."""
+        if self._cloud_refresh_inflight:
+            return
+        self._cloud_refresh_inflight = True
+        try:
+            self.async_set_updated_data(await self._cloud_status())
+        except ConfigEntryAuthFailed:
+            self.start_reauth()
+            self._schedule_advert_refresh()        # cloud dead -> deferred local
+        except Exception as exc:  # noqa: BLE001 — never let an event read crash
+            _LOGGER.debug("%s: cloud state read failed (%s); deferring local",
+                          self.lock_name, type(exc).__name__)
             self._schedule_advert_refresh()
+        finally:
+            self._cloud_refresh_inflight = False
 
     def _cancel_advert_refresh(self) -> None:
         if self._advert_handle is not None:
@@ -190,6 +229,40 @@ class QrioLockCoordinator(DataUpdateCoordinator[dict]):
         self._advert_handle = None
         if not self._closing:
             await self.async_request_refresh()
+
+    # ---- Battery: on-demand (button) + once-a-day local read ----
+    async def async_read_battery_now(self, *, raise_on_error: bool = False) -> None:
+        """Do ONE local BLE read to refresh battery/signal, then leave it cached.
+
+        Used by the "Refresh battery" button and the daily poll. Battery is BLE-
+        only (cloud can't read it); the values persist (tagged cached) until the
+        next read."""
+        try:
+            self.async_set_updated_data(await self._local_status())
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.debug("%s: battery read failed (%s)", self.lock_name, type(exc).__name__)
+            if raise_on_error:
+                raise HomeAssistantError(
+                    f"Qrio battery read failed: {type(exc).__name__}") from exc
+
+    def start_daily_poll(self) -> None:
+        """Schedule the once-a-day local battery read at the configured time."""
+        self._cancel_daily()
+        try:
+            hh, mm, *rest = (int(x) for x in self._daily_time.split(":"))
+            ss = rest[0] if rest else 0
+        except (ValueError, AttributeError):
+            hh, mm, ss = 3, 0, 0
+        self._unsub_daily = async_track_time_change(
+            self.hass,
+            lambda now: self.hass.async_create_task(self.async_read_battery_now()),
+            hour=hh, minute=mm, second=ss,
+        )
+
+    def _cancel_daily(self) -> None:
+        if self._unsub_daily is not None:
+            self._unsub_daily()
+            self._unsub_daily = None
 
     # ---- STATUS (read-only; fallback/retry across transports is safe) ----
     async def _local_status(self) -> dict:
@@ -424,6 +497,7 @@ class QrioLockCoordinator(DataUpdateCoordinator[dict]):
             self._unsub_advert()
             self._unsub_advert = None
         self._cancel_advert_refresh()
+        self._cancel_daily()
         self._cancel_idle_timer()
         async with self._ble_lock:
             await self._teardown()
