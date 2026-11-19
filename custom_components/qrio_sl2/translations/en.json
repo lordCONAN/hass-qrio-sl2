@@ -67,10 +67,6 @@
   },
   "entity": {
     "sensor": {
-      "thumb_turn": {
-        "name": "Thumb-turn",
-        "state": { "locked": "Locked", "unlocked": "Unlocked", "unknown": "Unknown" }
-      },
       "battery": {
         "name": "Battery",
         "state": { "good": "Good", "low": "Low", "replace": "Replace", "empty": "Empty", "unknown": "Unknown" }

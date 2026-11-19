@@ -29,14 +29,6 @@ class QrioSensorDescription(SensorEntityDescription):
 
 SENSORS: tuple[QrioSensorDescription, ...] = (
     QrioSensorDescription(
-        key="thumb_turn",
-        translation_key="thumb_turn",
-        icon="mdi:rotate-right",
-        device_class=SensorDeviceClass.ENUM,
-        options=["locked", "unlocked", "unknown"],
-        value=lambda d: d.get("thumb_turn"),
-    ),
-    QrioSensorDescription(
         key="battery",
         translation_key="battery",
         icon="mdi:battery",
