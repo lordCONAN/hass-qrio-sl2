@@ -29,6 +29,8 @@ from .transport import BleNotSubmitted, BleUncertain
 from .const import (
     ACK_TIMEOUT,
     ADVERT_REFRESH_DELAY,
+    UNLOCKED_RECHECK_INTERVAL,
+    UNLOCKED_RECHECK_MAX,
     BLE_COMMAND_TIMEOUT,
     BLE_CONNECT_TIMEOUT,
     BLE_DIAG_KEYS,
@@ -131,6 +133,10 @@ class QrioLockCoordinator(DataUpdateCoordinator[dict]):
         self._last_lastlog: int | None = None
         self._advert_handle = None
         self._cloud_refresh_inflight = False
+        # auto-lock has no advert -> re-check via cloud while unlocked
+        self._unlocked_handle = None
+        self._unlocked_tracking = False
+        self._unlocked_since = 0.0
         # once-a-day local battery read (for battery) at a user-set local time
         self._daily_time = entry.options.get(
             CONF_DAILY_POLL_TIME, DEFAULT_DAILY_POLL_TIME)
@@ -198,16 +204,60 @@ class QrioLockCoordinator(DataUpdateCoordinator[dict]):
             return
         self._cloud_refresh_inflight = True
         try:
-            self.async_set_updated_data(await self._cloud_status())
+            st = await self._cloud_status()
+            self.async_set_updated_data(st)
+            self._arm_unlocked_recheck(st)
         except ConfigEntryAuthFailed:
             self.start_reauth()
             self._schedule_advert_refresh()        # cloud dead -> deferred local
         except Exception as exc:  # noqa: BLE001 — never let an event read crash
             _LOGGER.debug("%s: cloud state read failed (%s); deferring local",
                           self.lock_name, type(exc).__name__)
-            self._schedule_advert_refresh()
+            if self._unlocked_tracking:
+                self._schedule_unlocked_recheck()  # transient error: keep trying
+            else:
+                self._schedule_advert_refresh()
         finally:
             self._cloud_refresh_inflight = False
+
+    # ---- Auto-lock catch-up: poll cloud while unlocked (no BLE) ----
+    def _arm_unlocked_recheck(self, data: dict | None) -> None:
+        """Keep re-checking state while the lock reads unlocked (hub only).
+
+        An auto-lock emits no advert, so without this HA would stay 'unlocked'.
+        Stops as soon as a read shows locked, or after UNLOCKED_RECHECK_MAX."""
+        locked = (data or {}).get("locked")
+        if locked is False and self._cloud_state_available():
+            if not self._unlocked_tracking:
+                self._unlocked_tracking = True
+                self._unlocked_since = time.monotonic()
+            self._schedule_unlocked_recheck()
+        else:
+            self._unlocked_tracking = False
+            self._cancel_unlocked_recheck()
+
+    def _cancel_unlocked_recheck(self) -> None:
+        if self._unlocked_handle is not None:
+            self._unlocked_handle.cancel()
+            self._unlocked_handle = None
+
+    def _schedule_unlocked_recheck(self) -> None:
+        self._cancel_unlocked_recheck()
+        if self._closing:
+            return
+        self._unlocked_handle = self.hass.loop.call_later(
+            UNLOCKED_RECHECK_INTERVAL,
+            lambda: self.hass.async_create_task(self._unlocked_recheck()),
+        )
+
+    async def _unlocked_recheck(self) -> None:
+        self._unlocked_handle = None
+        if self._closing or not self._unlocked_tracking:
+            return
+        if time.monotonic() - self._unlocked_since > UNLOCKED_RECHECK_MAX:
+            self._unlocked_tracking = False     # give up (door likely held open)
+            return
+        await self._refresh_state_cloud()        # re-arms if still unlocked
 
     def _cancel_advert_refresh(self) -> None:
         if self._advert_handle is not None:
@@ -238,7 +288,9 @@ class QrioLockCoordinator(DataUpdateCoordinator[dict]):
         only (cloud can't read it); the values persist (tagged cached) until the
         next read."""
         try:
-            self.async_set_updated_data(await self._local_status())
+            st = await self._local_status()
+            self.async_set_updated_data(st)
+            self._arm_unlocked_recheck(st)
         except Exception as exc:  # noqa: BLE001
             _LOGGER.debug("%s: battery read failed (%s)", self.lock_name, type(exc).__name__)
             if raise_on_error:
@@ -302,6 +354,11 @@ class QrioLockCoordinator(DataUpdateCoordinator[dict]):
         return merged
 
     async def _async_update_data(self) -> dict:
+        data = await self._compute_update_data()
+        self._arm_unlocked_recheck(data)
+        return data
+
+    async def _compute_update_data(self) -> dict:
         mode = self.status_transport if self.has_hub else T_LOCAL
 
         async def local() -> dict:
@@ -359,6 +416,11 @@ class QrioLockCoordinator(DataUpdateCoordinator[dict]):
         data = dict(self.data or {})
         data["locked"] = want_locked
         self.async_set_updated_data(data)
+        # After an unlock, start catching the (advert-less) auto-lock: via cloud if
+        # available, else a single deferred local read past the auto-lock grace.
+        if not want_locked and not self._cloud_state_available():
+            self._schedule_advert_refresh()
+        self._arm_unlocked_recheck(data)
         await self._confirm_after_operate(executed)
 
     async def _dispatch_operate(self, local, cloud, want_locked: bool, verb: str) -> str:
@@ -497,6 +559,7 @@ class QrioLockCoordinator(DataUpdateCoordinator[dict]):
             self._unsub_advert()
             self._unsub_advert = None
         self._cancel_advert_refresh()
+        self._cancel_unlocked_recheck()
         self._cancel_daily()
         self._cancel_idle_timer()
         async with self._ble_lock:

@@ -100,3 +100,9 @@ KEEPALIVE_IDLE = 8.0
 # the short regular one. Instead we wait out the grace, then do one debounced
 # read. 300s is safely past the ~255s (0xFF) failsafe window.
 ADVERT_REFRESH_DELAY = 300.0
+# An autonomous AUTO-LOCK emits no BLE advert, so we'd never see the relock.
+# While the lock reads UNLOCKED and a hub is available, re-check state via the
+# cloud (no BLE) every INTERVAL until it reads locked, then stop — capped so a
+# genuinely-held-open door doesn't poll forever.
+UNLOCKED_RECHECK_INTERVAL = 20.0
+UNLOCKED_RECHECK_MAX = 900.0
